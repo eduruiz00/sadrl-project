@@ -70,6 +70,28 @@ class RetNetRelPos(nn.Module):
 
         return retention_rel_pos
 
+class DecoderLayerWrapper(nn.Module):
+    def __init__(
+        self,
+        layer,
+        incremental_state=None,
+        chunkwise_recurrent=False,
+        retention_rel_pos=None,
+    ):
+        super().__init__()
+        self.layer = layer
+        self.incremental_state = incremental_state
+        self.chunkwise_recurrent = chunkwise_recurrent
+        self.retention_rel_pos = retention_rel_pos
+    
+    def forward(self, x):
+        return self.layer(
+            x,
+            self.incremental_state,
+            self.chunkwise_recurrent,
+            self.retention_rel_pos
+        )
+
 class DecoderLayer(nn.Module):
     def __init__(
         self,
@@ -160,9 +182,13 @@ class DecoderLayer(nn.Module):
         chunkwise_recurrent=False,
         retention_rel_pos=None,
     ):
+        import time
+        init = time.time()
         residual = x
         if self.normalize_before:
             x = self.retention_layer_norm(x)
+        print("time 1:", time.time()-init)
+        init = time.time()
 
         x = self.retention(
             x,
@@ -170,32 +196,45 @@ class DecoderLayer(nn.Module):
             rel_pos=retention_rel_pos,
             chunkwise_recurrent=chunkwise_recurrent,
         )
+        print("time 2:", time.time()-init)
+        init = time.time()
         x = self.dropout_module(x)
-
+        print("time 3:", time.time()-init)
+        init = time.time()
         if self.drop_path is not None:
             x = self.drop_path(x)
-
+        print("time 4:", time.time()-init)
+        init = time.time()
         x = self.residual_connection(x, residual)
+        print("time 5:", time.time()-init)
+        init = time.time()
         if not self.normalize_before:
             x = self.retention_layer_norm(x)
-
+        print("time 6:", time.time()-init)
+        init = time.time()
         residual = x
         if self.normalize_before:
             x = self.final_layer_norm(x)
+        print("time 7:", time.time()-init)
+        init = time.time()
         if not self.is_moe_layer:
             x = self.ffn(x)
             l_aux = None
         else:
             x, l_aux = self.moe_layer(x)
-
+        print("time 8:", time.time()-init)
+        init = time.time()
         if self.drop_path is not None:
             x = self.drop_path(x)
-
+        print("time 9:", time.time()-init)
+        init = time.time()
         x = self.residual_connection(x, residual)
         if not self.normalize_before:
             x = self.final_layer_norm(x)
-
-        return x, l_aux
+        print("time 10:", time.time()-init)
+        init = time.time()
+        print("")
+        return x
 
 
 class RetNetDecoder(nn.Module):
@@ -241,6 +280,7 @@ class RetNetDecoder(nn.Module):
         self.layers = nn.ModuleList([])
 
         moe_freq = config.moe_freq
+        print("confif decoder layers", config.decoder_layers)
         for i in range(config.decoder_layers):
             is_moe_layer = moe_freq != 0 and (i + 1) % moe_freq == 0
             self.layers.append(
@@ -400,28 +440,45 @@ class RetNetDecoder(nn.Module):
         # relative position
         retention_rel_pos = self.retnet_rel_pos(slen, incremental_state is not None and not is_first_step, chunkwise_recurrent=self.chunkwise_recurrent)
         # decoder layers
-        inner_states = [x]
+        # inner_states = [x]
 
-        l_aux = []
-
-        for idx, layer in enumerate(self.layers):
-            if incremental_state is None or is_first_step:
-                if is_first_step and incremental_state is not None:
-                    if idx not in incremental_state:
-                        incremental_state[idx] = {}
-            else:
-                if idx not in incremental_state:
-                    incremental_state[idx] = {}
+        # import time
+        # init_time = time.time()
+        # print(self.layers)
+        # # l_aux = []
+        # for idx, layer in enumerate(self.layers):
+        #     # if incremental_state is None or is_first_step:
+        #     #     if is_first_step and incremental_state is not None:
+        #     #         if idx not in incremental_state:
+        #     #             incremental_state[idx] = {}
+        #     # else:
+        #     #     if idx not in incremental_state:
+        #     #         incremental_state[idx] = {}
                     
-            x, l_aux_i = layer(
-                x,
-                incremental_state[idx] if incremental_state is not None else None,
-                retention_rel_pos=retention_rel_pos,
-                chunkwise_recurrent=self.chunkwise_recurrent,
-            )
-            l_aux.append(l_aux_i)
-            inner_states.append(x)
-            
+        #     x, l_aux_i = layer(
+        #         x,
+        #         incremental_state[idx] if incremental_state is not None else None,
+        #         retention_rel_pos=retention_rel_pos,
+        #         chunkwise_recurrent=self.chunkwise_recurrent,
+        #     )
+            # l_aux.append(l_aux_i)
+            # inner_states.append(x)
+        from torchsummary import summary
+        layers = nn.Sequential(
+            *[
+                DecoderLayerWrapper(
+                    layer,
+                    incremental_state[idx] if incremental_state is not None else None,
+                    chunkwise_recurrent=self.chunkwise_recurrent,
+                    retention_rel_pos=retention_rel_pos,
+                )
+                for idx, layer in enumerate(self.layers)
+            ]
+        )
+        print(summary(layers, (339, 128)))
+        print("layers time: ", time.time() - init_time)
+        init_time = time.time()
+        
         if self.chunkwise_recurrent and input.size(1) % self.recurrent_chunk_size != 0:
             x = x[:, :input.size(1), :]
 

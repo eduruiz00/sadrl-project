@@ -171,34 +171,55 @@ class MultiScaleRetention(nn.Module):
         chunkwise_recurrent=False,
         incremental_state=None
     ):
+        import time
+        init = time.time()
         bsz, tgt_len, _ = x.size()
         (sin, cos), inner_mask = rel_pos
+        print("time 01: ", time.time() - init)
+        init = time.time()
 
         q = self.q_proj(x)
+        print("time 02: ", time.time() - init)
+        init = time.time()
         k = self.k_proj(x)
+        print("time 03: ", time.time() - init)
+        init = time.time()
         v = self.v_proj(x)
+        print("time 04: ", time.time() - init)
+        init = time.time()
         g = self.g_proj(x)
 
+        print("time 05: ", time.time() - init)
+        init = time.time()
         k *= self.scaling
         q = q.view(bsz, tgt_len, self.num_heads, self.key_dim).transpose(1, 2)
         k = k.view(bsz, tgt_len, self.num_heads, self.key_dim).transpose(1, 2)
+        print("time 06: ", time.time() - init)
+        init = time.time()
 
         qr = theta_shift(q, sin, cos)
         kr = theta_shift(k, sin, cos)
-
+        print("time 07: ", time.time() - init)
+        init = time.time()
         if incremental_state is not None:
             output = self.recurrent_forward(qr, kr, v, inner_mask, incremental_state)
         elif chunkwise_recurrent:
             output = self.chunk_recurrent_forward(qr, kr, v, inner_mask)
         else:
             output = self.parallel_forward(qr, kr, v, inner_mask)
+        print("time 08: ", time.time() - init)
+        init = time.time()
         
         output = self.group_norm(output).reshape(bsz, tgt_len, self.head_dim * self.num_heads)
+        print("norm time: ", time.time() - init)
+        init = time.time()
 
         output = self.gate_fn(g) * output
-
+        print("time 09: ", time.time() - init)
+        init = time.time()
         output = self.out_proj(output)
-
+        print("time 010: ", time.time() - init)
+        init = time.time()
         return output
 
         

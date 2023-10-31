@@ -32,6 +32,8 @@ class CausalSelfAttention(nn.Module):
         self.n_head = config.n_head
 
     def forward(self, x, layer_past=None):
+        import time
+        init = time.time()
         B, T, C = x.size()
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
@@ -54,6 +56,7 @@ class CausalSelfAttention(nn.Module):
 
         # output projection
         y = self.resid_drop(self.proj(y))
+        print("attention time: ", time.time() - init)
         return y
 
 class Block(nn.Module):
@@ -205,6 +208,7 @@ class GPT(nn.Module):
             idx : [ B x T ]
             values : [ B x 1 x 1 ]
         """
+
         b, t = idx.size()
         assert t <= self.block_size, "Cannot forward, model block size is exhausted."
 
@@ -216,7 +220,13 @@ class GPT(nn.Module):
         position_embeddings = self.pos_emb[:, :t, :] # each position maps to a (learnable) vector
         ## [ B x T x embedding_dim ]
         x = self.drop(token_embeddings + position_embeddings)
+        import time
+        init_time = time.time()
         x = self.blocks(x)
+        from torchsummary import summary
+        print(summary(self.blocks, (339, 128)))
+
+        print("forward time: ", time.time() - init_time)
         ## [ B x T x embedding_dim ]
         x = self.ln_f(x)
 
